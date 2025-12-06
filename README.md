@@ -1,4 +1,4 @@
-# Analysis of the work of the Google online store
+# The Google online store Analytics
 
 Tools: Google Analytics 4 public dataset on the BigQuery platform using SQL queries.
 Goal: Calculated metrics and investigated their changes collected using Google Analytics 4.
