@@ -1,0 +1,118 @@
+#--1
+select
+timestamp_micros(event_timestamp) as event_timestamp,
+user_pseudo_id,
+(select value. int_value from unnest(event_params) where
+key='ga_session_id') as session_id,
+event_name,
+geo.country as country,
+device.category as device_category,
+traffic_source.source as source,
+traffic_source.medium as medium,
+traffic_source.name as campaign
+from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_2021*` as b
+ where event_name in ('session_start', 'view_item', 'add_to_cart',
+'begin_checkout', 'add_shipping_info', 'add_payment_info', 'purchase')
+order by 1
+limit 100
+;
+
+#--2
+with start_data as
+(select
+date(timestamp_micros(event_timestamp)) as event_date,
+traffic_source.source as source,
+traffic_source.medium as medium,
+traffic_source.name as campaign,
+event_name,
+user_pseudo_id ||
+cast((select value. int_value from unnest(event_params) where
+key='ga_session_id') as string) as user_session_id,
+ from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` as b
+ where event_name in ('session_start', 'add_to_cart',
+'begin_checkout', 'purchase'))
+ select
+ event_date, source, medium, campaign,
+count(distinct case when event_name = 'session_start' then
+user_session_id end) as user_session_count,
+count(distinct case when event_name = 'add_to_cart' then user_session_id end)/
+count(distinct case when event_name = 'session_start' then
+user_session_id end) as visit_to_cart,
+count(distinct case when event_name = 'begin_checkout' then
+user_session_id end)/
+count(distinct case when event_name = 'session_start' then
+user_session_id end) as visit_to_checkout,
+count(distinct case when event_name = 'purchase' then user_session_id end)/
+count(distinct case when event_name = 'session_start' then
+user_session_id end) as visit_to_purchase
+ from start_data
+ group by 1, 2, 3, 4
+ limit 100;
+
+#--3
+with start_page_session as
+(select
+event_name,
+user_pseudo_id ||
+cast((select value. int_value from unnest(event_params) where
+key='ga_session_id') as string) as user_session_id,
+ regexp_extract(
+ (select value. string_value from unnest(event_params) where
+key='page_location'), 'googlemerchandisestore.com/([^?|#]+)') as
+page_path,
+  from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_2020*` as b
+ where event_name ='session_start'),
+purchase_stat as
+(select
+event_name,
+user_pseudo_id ||
+cast((select value. int_value from unnest(event_params) where
+key='ga_session_id') as string) as user_session_id
+from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_2020*` as b
+ where event_name= 'purchase')
+ select
+ distinct (s.page_path),
+ count(distinct s.user_session_id) as user_session_count,
+ count(distinct case when p.event_name = 'purchase' then
+p.user_session_id end) as purchase_count,
+ count(distinct case when p.event_name = 'purchase' then p.user_session_id end)/
+ count(distinct s.user_session_id) as conversion_to_purchase
+ from start_page_session s left join purchase_stat p
+ on s.user_session_id=p.user_session_id
+ group by 1
+ order by 2 desc, 1
+ limit 100;
+
+#--4
+with session_eng as
+(select
+user_pseudo_id ||
+cast((select value. int_value from unnest(event_params) where
+key='ga_session_id') as string) as user_session_id,
+  coalesce (
+  cast((select value. string_value from unnest(event_params) where
+key='session_engaged') as int),
+  (select value. int_value from unnest(event_params) where
+key='session_engaged')) as session_engaged,
+  sum(coalesce (
+  (select value. int_value from unnest(event_params) where
+key='engagement_time_msec'), 0)) as engagement_time_msec,
+  from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` as b
+  group by 1, 2),
+  purchase_stat as
+  (select
+  user_pseudo_id ||
+  cast((select value. int_value from unnest(event_params) where
+key='ga_session_id') as string) as user_session_id,
+  max (case when event_name ='purchase' then 1 else 0 end) as purchase
+  from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` as b
+  group by 1)
+  select
+  --s.user_session_id as user_session_id,
+  corr(s.session_engaged,
+  p.purchase) as corr_eng_purch,
+  corr(s.engagement_time_msec,
+  p.purchase) as corr_time_eng_purch
+  from session_eng s left join purchase_stat p on
+s.user_session_id=p.user_session_id
+  ;
